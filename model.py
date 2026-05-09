@@ -1,11 +1,9 @@
-import torch.nn as nn
 import segmentation_models_pytorch as smp
+import torch.nn as nn
 
 
 class DiseaseSegmenter(nn.Module):
-    def __init__(
-        self, encoder_name="mobilenet_v3_small", encoder_weights="imagenet"
-    ):
+    def __init__(self, encoder_name="mobilenet_v2", encoder_weights="imagenet"):
         super().__init__()
         self.model = smp.Unet(
             encoder_name=encoder_name,
