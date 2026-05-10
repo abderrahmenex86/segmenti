@@ -103,3 +103,44 @@ def train(
             json.dump(history, f)
 
     return history
+
+
+def parse_disease_name(filename):
+    import re
+
+    name = filename.strip("'\" \n").replace(".jpg", "")
+
+    name = re.sub(r"_[Bb]ing_.*$", "", name)
+    name = re.sub(r"_[Gg]oogle_.*$", "", name)
+    name = re.sub(r"_[Bb]aidu_.*$", "", name)
+
+    name = re.sub(r"_banana black sigatoka \(\d+\)$", "", name)
+    name = re.sub(r"_blotch \(\d+\)$", "", name)
+    name = re.sub(r"_black_chaff \(\d+\)$", "", name)
+
+    name = re.sub(r"_\d+$", "", name)
+
+    return name
+
+
+def build_taxonomy(images_dir, output_file="class_mapping.json"):
+    import json
+    import os
+
+    unique_classes = set()
+
+    for filename in os.listdir(images_dir):
+        if not filename.endswith(".jpg"):
+            continue
+
+        clean_name = parse_disease_name(filename)
+        unique_classes.add(clean_name)
+
+    sorted_classes = sorted(list(unique_classes))
+
+    class_to_id = {name: idx for idx, name in enumerate(sorted_classes)}
+
+    with open(output_file, "w") as f:
+        json.dump(class_to_id, f, indent=4)
+
+    print(f"Saved to {output_file}")
