@@ -24,8 +24,9 @@ hf_cache/
 .mypy_cache/
 .pytest_cache/
 
-notebook.py
 fetch.sh
+fetch.py
+notebook.py
 
 *.ckpt
 *.csv
