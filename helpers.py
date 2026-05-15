@@ -1,8 +1,7 @@
 import json
 
 import torch
-from torchmetrics.classification import BinaryF1Score, BinaryJaccardIndex
-from torchmetrics.segmentation import DiceScore, MeanIoU
+from torchmetrics.classification import MulticlassF1Score, MulticlassJaccardIndex
 from tqdm.auto import tqdm
 
 
@@ -26,7 +25,7 @@ def train_epoch(model, loader, criterion, optimizer, device, dice, iou):
     total_samples = 0
 
     for images, masks in tqdm(loader, desc="Training", leave=False, unit="batch"):
-        images, masks = images.to(device, non_blocking=True), masks.to(device, dtype=torch.float32, non_blocking=True)
+        images, masks = images.to(device, non_blocking=True), masks.to(device, non_blocking=True)
 
         optimizer.zero_grad()
 
@@ -42,10 +41,10 @@ def train_epoch(model, loader, criterion, optimizer, device, dice, iou):
         total_samples += batch_size
         total_loss += loss.item() * batch_size
 
-        probs = torch.sigmoid(predictions["out"])
+        probs = torch.softmax(predictions["out"], dim=1)
 
-        dice.update(probs.squeeze(1), masks.squeeze(1).long())
-        iou.update(probs.squeeze(1), masks.squeeze(1).long())
+        dice.update(probs, masks.squeeze(1).long())
+        iou.update(probs, masks.squeeze(1).long())
 
     epoch_dice = dice.compute().item()
     epoch_iou = iou.compute().item()
@@ -69,9 +68,7 @@ def evaluate(model, loader, criterion, device, dice, iou):
 
     with torch.no_grad():
         for images, masks in tqdm(loader, desc="Evaluating", leave=False, unit="batch"):
-            images, masks = images.to(device, non_blocking=True), masks.to(
-                device, dtype=torch.float32, non_blocking=True
-            )
+            images, masks = images.to(device, non_blocking=True), masks.to(device, non_blocking=True)
 
             predictions = model(images)
 
@@ -81,10 +78,10 @@ def evaluate(model, loader, criterion, device, dice, iou):
             total_samples += batch_size
             total_loss += loss.item() * batch_size
 
-            probs = torch.sigmoid(predictions)
+            probs = torch.softmax(predictions, dim=1)
 
-            dice.update(probs.squeeze(1), masks.squeeze(1).long())
-            iou.update(probs.squeeze(1), masks.squeeze(1).long())
+            dice.update(probs, masks.squeeze(1).long())
+            iou.update(probs, masks.squeeze(1).long())
 
     epoch_dice = dice.compute().item()
     epoch_iou = iou.compute().item()
@@ -104,8 +101,8 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, devi
         "val": {"loss": [], "dice": [], "iou": []},
     }
 
-    dice = BinaryF1Score().to(device)
-    iou = BinaryJaccardIndex().to(device)
+    dice = MulticlassF1Score(num_classes=n_classes, average="macro").to(device)
+    iou = MulticlassJaccardIndex(num_classes=n_classes, average="macro").to(device)
 
     for epoch in tqdm(range(1, n_epochs + 1), unit="epoch", leave=True):
 
