@@ -10,7 +10,9 @@ class DiseaseSegmenter(nn.Module):
     def __init__(self, num_classes=116):
         super().__init__()
         self.model = deeplabv3_mobilenet_v3_large(
-            weights=DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT, weights_backbone=MobileNet_V3_Large_Weights.DEFAULT
+            weights=DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT,
+            weights_backbone=MobileNet_V3_Large_Weights.DEFAULT,
+            aux_loss=True,
         )
 
         in_channels = self.model.classifier[4].in_channels
