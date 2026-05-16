@@ -1,12 +1,12 @@
-import segmentation_models_pytorch.losses as smp_losses
 import torch.nn as nn
+from segmentation_models_pytorch.losses import MULTICLASS_MODE, DiceLoss
 
 
 class MulticlassDiceLoss(nn.Module):
-    def __init__(self, num_classes, aux_weight=0.3):
+    def __init__(self, aux_weight=0.3):
         super().__init__()
         self.ce = nn.CrossEntropyLoss()
-        self.dice = smp_losses.DiceLoss(mode=smp_losses.MULTICLASS_MODE, from_logits=True)
+        self.dice = DiceLoss(mode=MULTICLASS_MODE, from_logits=True)
         self.aux_weight = aux_weight
 
     def _compute_loss(self, pred, target):
