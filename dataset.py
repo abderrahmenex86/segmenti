@@ -1,4 +1,3 @@
-import json
 import os
 
 import numpy as np
@@ -6,8 +5,6 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import tv_tensors
-
-from helpers import parse_disease_name
 
 
 class PlantSegDataset(Dataset):
