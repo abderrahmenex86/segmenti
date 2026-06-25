@@ -53,7 +53,6 @@ def main():
     parser.add_argument("--image_path", type=str, default=None, help="Inference image source path")
     parser.add_argument("--run_dir", type=str, default=None, help="Target historical folder directory")
 
-    # Class mapping translation file argument
     parser.add_argument(
         "--class_mapping",
         type=str,
@@ -150,7 +149,6 @@ def main():
     elif args.mode == "infer":
         if args.image_path is None:
             parser.error("--image_path must be specified when using --mode infer.")
-        # Pass the class_mapping argument to the inference engine
         run_smart_inference(
             image_path=args.image_path, run_dir=args.run_dir, class_mapping_path=args.class_mapping, save_output=True
         )

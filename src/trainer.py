@@ -27,7 +27,6 @@ class Trainer:
         self.patience_counter = 0
         self.start_epoch = 1
 
-        # Metrics setup
         metric_classes = 2 if self.num_classes == 1 else self.num_classes
         self.dice_metric = DiceScore(num_classes=metric_classes, include_background=False, average="macro").to(device)
         self.iou_metric = MeanIoU(num_classes=metric_classes, include_background=False).to(device)
@@ -122,7 +121,6 @@ class Trainer:
         arch_file = os.path.join(self.run_dir, "architecture.txt")
         try:
             if torchinfo_summary is not None:
-                # Isolate eval state to inspect shape safely
                 was_training = self.model.training
                 self.model.eval()
                 with open(arch_file, "w") as f:
