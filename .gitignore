@@ -12,6 +12,7 @@ logs/
 models/
 results/
 vast/
+artifacts/
 
 temp/
 tmp/
@@ -46,6 +47,7 @@ inference.py
 *.pth
 *.sqlite3
 *.tmp
+*.sh
 
 .DS_Store
 Thumbs.db
