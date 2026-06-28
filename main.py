@@ -16,7 +16,7 @@ from src.trainer import Trainer
 def main():
     argument_parser = argparse.ArgumentParser(description="Segmenti Pure-PyTorch ML Lifecycle Engine")
     argument_parser.add_argument("--mode", required=True, choices=["test", "train", "optimize", "infer"])
-    argument_parser.add_argument("--root_dir", default="dataset/plantsegv3")
+    argument_parser.add_argument("--root_dir", default="dataset/plantseg")
     argument_parser.add_argument("--run_dir", default=None)
     argument_parser.add_argument("--resume", action="store_true")
     argument_parser.add_argument("--image_path", default=None)

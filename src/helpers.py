@@ -29,7 +29,7 @@ def download_dataset(destination_directory="dataset"):
         print(f"[ERROR] Failed to download or extract dataset: {error}")
 
 
-def verify_dataset_structure(dataset_directory="dataset/plantsegv3"):
+def verify_dataset_structure(dataset_directory="dataset/plantseg"):
     target_path = Path(dataset_directory)
     splits = ["train", "val"]
 
