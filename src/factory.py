@@ -50,12 +50,18 @@ def build_scheduler(optimizer, scheduler_type, **kwargs):
 
 def build_pipeline(model_type, num_classes, optimizer_type, learning_rate, weight_decay, scheduler_type, **kwargs):
     model_instance = build_model(model_type, num_classes, **kwargs)
+
+    device = kwargs.get("device", torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    model_instance = model_instance.to(device)
+
     loss_criterion = FocalDiceLoss(
         num_classes=num_classes, alpha=kwargs.get("focal_alpha", 0.25), gamma=kwargs.get("focal_gamma", 2.0)
     )
+
     optimizer_instance = build_optimizer(
         model_instance.parameters(), optimizer_type, learning_rate, weight_decay, **kwargs
     )
+
     scheduler_instance = build_scheduler(optimizer_instance, scheduler_type, **kwargs)
 
     return model_instance, loss_criterion, optimizer_instance, scheduler_instance
