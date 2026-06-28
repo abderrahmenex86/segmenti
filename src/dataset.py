@@ -116,14 +116,8 @@ def get_dataloaders(
     num_classes: int,
     img_size: int,
     limit_dataset: int = None,
-    num_workers: int = None,
-    pin_memory: bool = True,
 ):
-    use_cuda = torch.cuda.is_available()
-    if num_workers is None:
-        num_workers = 16 if use_cuda else 0
-
-    prefetch_factor = 4 if num_workers > 0 else None
+    prefetch_factor = 2
 
     train_transform = get_transforms(img_size, num_classes, is_train=True)
     val_transform = get_transforms(img_size, num_classes, is_train=False)
@@ -135,20 +129,20 @@ def get_dataloaders(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory if use_cuda else False,
+        num_workers=12,
+        pin_memory=True,
         prefetch_factor=prefetch_factor,
-        persistent_workers=True if num_workers > 0 else False,
+        persistent_workers=True,
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory if use_cuda else False,
+        num_workers=8,
+        pin_memory=True,
         prefetch_factor=prefetch_factor,
-        persistent_workers=True if num_workers > 0 else False,
+        persistent_workers=True,
     )
 
     return train_loader, val_loader
