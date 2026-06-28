@@ -1,73 +1,88 @@
 import json
-import os
+import urllib.request
+import zipfile
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 
-def download_dataset(target_dir="dataset"):
-    os.makedirs(target_dir, exist_ok=True)
-    splits = ["train", "val", "test"]
-    for split in splits:
-        os.makedirs(os.path.join(target_dir, "plantsegv3", "images", split), exist_ok=True)
-        os.makedirs(os.path.join(target_dir, "plantsegv3", "annotations", split), exist_ok=True)
-    print(f"\nDirectories created in '{target_dir}'. To begin training:")
-    print("1. Download the plantsegv3 disease dataset.")
-    print("2. Place raw RGB images (.jpg) inside 'dataset/plantsegv3/images/{split}/'")
-    print("3. Place matching mask targets (.png) inside 'dataset/plantsegv3/annotations/{split}/'")
+def download_dataset(destination_directory="dataset"):
+    root_path = Path(destination_directory)
+    root_path.mkdir(parents=True, exist_ok=True)
+
+    zip_destination_path = root_path / "plantseg.zip"
+    zenodo_download_url = "https://zenodo.org/records/17719108/files/plantseg.zip?download=1"
+
+    print(f"[INFO] Initializing download from Zenodo: {zenodo_download_url}")
+    print(f"[INFO] Saving archive to: {zip_destination_path}")
+
+    try:
+        urllib.request.urlretrieve(zenodo_download_url, zip_destination_path)
+        print("[SUCCESS] Download completed. Extracting archive contents...")
+
+        with zipfile.ZipFile(zip_destination_path, "r") as zip_reference:
+            zip_reference.extractall(root_path)
+
+        print(f"[SUCCESS] Extraction complete. Dataset structured inside: {destination_directory}")
+        zip_destination_path.unlink()
+    except Exception as error:
+        print(f"[ERROR] Failed to download or extract dataset: {error}")
 
 
-def verify_dataset_structure(root_dir="dataset/plantsegv3"):
-    print(f"Inspecting dataset alignment: {root_dir}")
+def verify_dataset_structure(dataset_directory="dataset/plantsegv3"):
+    target_path = Path(dataset_directory)
     splits = ["train", "val"]
-    for split in splits:
-        img_dir = os.path.join(root_dir, "images", split)
-        mask_dir = os.path.join(root_dir, "annotations", split)
 
-        if not os.path.exists(img_dir) or not os.path.exists(mask_dir):
-            print(f"  [WARNING] Split folder missing: {split}")
+    print(f"[INFO] Inspecting dataset at: {target_path.resolve()}")
+    for split in splits:
+        images_directory = target_path / "images" / split
+        annotations_directory = target_path / "annotations" / split
+
+        if not images_directory.exists() or not annotations_directory.exists():
+            print(f"  [WARNING] Split folder missing for: {split}")
             continue
 
-        imgs = sorted(os.listdir(img_dir))
-        masks = sorted(os.listdir(mask_dir))
-        print(f"  Split '{split}': Found {len(imgs)} source files and {len(masks)} target masks.")
+        image_files = sorted(
+            [file.name for file in images_directory.glob("*.*") if file.suffix.lower() in [".jpg", ".png"]]
+        )
+        annotation_files = sorted([file.name for file in annotations_directory.glob("*.png")])
 
-        mismatches = 0
-        for i in imgs[:20]:
-            base = os.path.splitext(i)[0]
-            if f"{base}.png" not in masks:
-                mismatches += 1
-        if mismatches > 0:
-            print(f"  [ERROR] Alignment mismatch in {mismatches} of the first 20 file check targets.")
+        print(f"  Split '{split}': Located {len(image_files)} source images and {len(annotation_files)} annotations.")
+
+        mismatched_counter = 0
+        for image_name in image_files[:20]:
+            base_name = Path(image_name).stem
+            expected_annotation_name = f"{base_name}.png"
+            if expected_annotation_name not in annotation_files:
+                mismatched_counter += 1
+
+        if mismatched_counter > 0:
+            print(f"  [ERROR] Alignment mismatch in {mismatched_counter} out of the first 20 file check targets.")
         else:
-            print("  --> Match validation checks complete.")
+            print("  --> Verification checks successfully completed.")
 
 
 def generate_analytics_plots():
-    os.makedirs("docs/figs", exist_ok=True)
-    artifacts_dir = "artifacts"
-    if not os.path.exists(artifacts_dir):
-        print("No run records directory found.")
+    artifacts_path = Path("artifacts")
+    if not artifacts_path.exists():
+        print("[ERROR] No artifacts folder detected.")
         return
 
-    runs = sorted(
-        [
-            os.path.join(artifacts_dir, d)
-            for d in os.listdir(artifacts_dir)
-            if os.path.isdir(os.path.join(artifacts_dir, d)) and not d.startswith("default_")
-        ]
+    run_directories = sorted(
+        [directory for directory in artifacts_path.iterdir() if directory.is_dir() and directory.name != "default"]
     )
-    if not runs:
-        print("No runs found in artifacts.")
+    if not run_directories:
+        print("[ERROR] No training runs found inside artifacts.")
         return
 
-    latest_run = runs[-1]
-    history_file = os.path.join(latest_run, "model_history.json")
-    if not os.path.exists(history_file):
-        print(f"No metric history found at: {latest_run}")
+    latest_run_directory = run_directories[-1]
+    history_file_path = latest_run_directory / "model_history.json"
+
+    if not history_file_path.exists():
+        print(f"[ERROR] Metric history missing at: {history_file_path}")
         return
 
-    with open(history_file, "r") as f:
-        history = json.load(f)
+    history = json.loads(history_file_path.read_text())
 
     train_loss = history["train"]["loss"]
     val_loss = history["val"]["loss"]
@@ -76,40 +91,42 @@ def generate_analytics_plots():
     train_iou = history["train"]["iou"]
     val_iou = history["val"]["iou"]
 
-    epochs = list(range(1, len(train_loss) + 1))
+    epoch_indices = list(range(1, len(train_loss) + 1))
 
-    plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
-    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-    axs[0, 0].plot(epochs, train_loss, "o-", color="royalblue", label="Train")
-    axs[0, 0].plot(epochs, val_loss, "s--", color="darkorange", label="Val")
-    axs[0, 0].set_title("Dice + CE Objective Curves")
-    axs[0, 0].set_xlabel("Epoch")
-    axs[0, 0].set_ylabel("Loss")
-    axs[0, 0].legend()
+    axes[0, 0].plot(epoch_indices, train_loss, "o-", color="royalblue", label="Train")
+    axes[0, 0].plot(epoch_indices, val_loss, "s--", color="darkorange", label="Val")
+    axes[0, 0].set_title("Focal + Dice Loss Convergence")
+    axes[0, 0].set_xlabel("Epoch Index")
+    axes[0, 0].set_ylabel("Loss")
+    axes[0, 0].legend()
 
-    axs[0, 1].plot(epochs, train_dice, "o-", color="forestgreen", label="Train")
-    axs[0, 1].plot(epochs, val_dice, "s--", color="crimson", label="Val")
-    axs[0, 1].set_title("Dice Overlap Accuracy")
-    axs[0, 1].set_xlabel("Epoch")
-    axs[0, 1].set_ylabel("Dice Score (%)")
-    axs[0, 1].legend()
+    axes[0, 1].plot(epoch_indices, train_dice, "o-", color="forestgreen", label="Train")
+    axes[0, 1].plot(epoch_indices, val_dice, "s--", color="crimson", label="Val")
+    axes[0, 1].set_title("Dice Overlap Percentage")
+    axes[0, 1].set_xlabel("Epoch Index")
+    axes[0, 1].set_ylabel("Dice Score (%)")
+    axes[0, 1].legend()
 
-    axs[1, 0].plot(epochs, train_iou, "o-", color="indigo", label="Train")
-    axs[1, 0].plot(epochs, val_iou, "s--", color="darkorchid", label="Val")
-    axs[1, 0].set_title("Mean Intersection over Union")
-    axs[1, 0].set_xlabel("Epoch")
-    axs[1, 0].set_ylabel("IoU (%)")
-    axs[1, 0].legend()
+    axes[1, 0].plot(epoch_indices, train_iou, "o-", color="indigo", label="Train")
+    axes[1, 0].plot(epoch_indices, val_iou, "s--", color="darkorchid", label="Val")
+    axes[1, 0].set_title("Mean Intersection over Union (IoU)")
+    axes[1, 0].set_xlabel("Epoch Index")
+    axes[1, 0].set_ylabel("IoU (%)")
+    axes[1, 0].legend()
 
-    loss_delta = [v - t for t, v in zip(train_loss, val_loss)]
-    axs[1, 1].bar(epochs, loss_delta, color="teal", alpha=0.7, label="Val - Train Loss")
-    axs[1, 1].set_title("Generalization Variance")
-    axs[1, 1].set_xlabel("Epoch")
-    axs[1, 1].set_ylabel("Loss Delta")
-    axs[1, 1].legend()
+    generalization_delta = [validation - training for training, validation in zip(train_loss, val_loss)]
+    axes[1, 1].bar(epoch_indices, generalization_delta, color="teal", alpha=0.7, label="Val - Train Loss")
+    axes[1, 1].set_title("Generalization Delta Variance")
+    axes[1, 1].set_xlabel("Epoch Index")
+    axes[1, 1].set_ylabel("Loss Variance")
+    axes[1, 1].legend()
 
     plt.tight_layout()
-    out_path = "docs/figs/training_metrics_grid.png"
-    plt.savefig(out_path, dpi=300)
-    print(f"Diagnostic plots saved to: {out_path}")
+    output_figure_directory = Path("docs/figs")
+    output_figure_directory.mkdir(parents=True, exist_ok=True)
+    output_figure_path = output_figure_directory / "training_metrics_grid.png"
+    plt.savefig(output_figure_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"[SUCCESS] Diagnostic metric plots generated at: {output_figure_path}")
