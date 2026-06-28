@@ -1,12 +1,12 @@
 import argparse
-import datetime
 import json
-import os
+from datetime import datetime
+from pathlib import Path
 
 import torch
 
 from src.dataset import get_dataloaders
-from src.factory import build_criterion, build_model, build_optimizer, build_scheduler
+from src.factory import build_pipeline
 from src.infer import run_smart_inference
 from src.optimize import run_optuna_study
 from src.tester import run_sanity_checks
@@ -14,121 +14,77 @@ from src.trainer import Trainer
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Segmenti Crop Disease Segmentation Lifecycle Engine")
-    parser.add_argument(
-        "--mode", type=str, required=True, choices=["test", "train", "optimize", "infer"], help="Active engine phase"
-    )
+    argument_parser = argparse.ArgumentParser(description="Segmenti Pure-PyTorch ML Lifecycle Engine")
+    argument_parser.add_argument("--mode", required=True, choices=["test", "train", "optimize", "infer"])
+    argument_parser.add_argument("--root_dir", default="dataset/plantsegv3")
+    argument_parser.add_argument("--run_dir", default=None)
+    argument_parser.add_argument("--resume", action="store_true")
+    argument_parser.add_argument("--image_path", default=None)
 
-    parser.add_argument("--root_dir", type=str, default="dataset/plantsegv3", help="Target dataset folder path")
-    parser.add_argument("--batch_size", type=int, default=8, help="DataLoader batch size")
-    parser.add_argument("--img_size", type=int, default=520, help="Resolution sizing parameter")
-    parser.add_argument("--num_classes", type=int, default=116, help="Target classification mapping count")
+    parsed_arguments, unknown_arguments = argument_parser.parse_known_args()
 
-    parser.add_argument(
-        "--model_type", type=str, default="unet", choices=["unet", "deeplabv3"], help="Active model architecture"
-    )
-    parser.add_argument("--encoder_name", type=str, default="mobilenet_v2", help="Feature extractor backbone")
-    parser.add_argument("--encoder_weights", type=str, default="imagenet", help="Source pretraining state")
+    hyperparameters = vars(parsed_arguments)
+    hyperparameters["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    parser.add_argument("--lr", type=float, default=1e-3, help="Optimizer peak learning rate")
-    parser.add_argument("--weight_decay", type=float, default=1e-3, help="L2 penalty coefficient")
-    parser.add_argument(
-        "--optimizer", type=str, default="adamw", choices=["adamw", "adam", "sgd"], help="Numerical optimizer selection"
-    )
-    parser.add_argument("--pos_weight", type=float, default=5.0, help="Positive binary category weighting scale")
+    unknown_arguments_dictionary = {
+        unknown_arguments[index].lstrip("-"): (
+            (float(value) if "." in value else int(value)) if value.replace(".", "", 1).isdigit() else value
+        )
+        for index, value in zip(range(0, len(unknown_arguments), 2), unknown_arguments[1::2])
+    }
+    hyperparameters.update(unknown_arguments_dictionary)
 
-    parser.add_argument(
-        "--scheduler",
-        type=str,
-        default="plateau",
-        choices=["plateau", "cosine", "step", "none"],
-        help="LR decay sequence builder",
-    )
+    hyperparameters.setdefault("num_classes", 116)
+    hyperparameters.setdefault("img_size", 256)
+    hyperparameters.setdefault("batch_size", 16)
+    hyperparameters.setdefault("epochs", 50)
+    hyperparameters.setdefault("patience", 5)
+    hyperparameters.setdefault("model_type", "unet")
+    hyperparameters.setdefault("optimizer_type", "AdamW")
+    hyperparameters.setdefault("learning_rate", 1e-3)
+    hyperparameters.setdefault("weight_decay", 1e-4)
+    hyperparameters.setdefault("scheduler_type", "ReduceLROnPlateau")
 
-    parser.add_argument("--epochs", type=int, default=50, help="Training sweeps limit")
-    parser.add_argument("--patience", type=int, default=5, help="Early stopping patience threshold")
-    parser.add_argument("--resume", action="store_true", help="Flag to recover and continue training")
-    parser.add_argument("--optuna_trials", type=int, default=15, help="Optuna hyperparameter sweep scale")
-
-    parser.add_argument("--image_path", type=str, default=None, help="Inference image source path")
-    parser.add_argument("--run_dir", type=str, default=None, help="Target historical folder directory")
-
-    parser.add_argument(
-        "--class_mapping",
-        type=str,
-        default=None,
-        help="Path to JSON file containing name/index pairs for class names conversion",
-    )
-
-    args = parser.parse_args()
-    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    os.makedirs("artifacts", exist_ok=True)
-
-    if args.run_dir is None:
-        if args.mode in ["train", "optimize"]:
-            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            args.run_dir = os.path.join("artifacts", f"{now}_{args.model_type}_{args.num_classes}class")
+    if hyperparameters["run_dir"] is None:
+        if parsed_arguments.mode in ["train", "optimize"]:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_name = hyperparameters["model_type"]
+            class_count = hyperparameters["num_classes"]
+            hyperparameters["run_dir"] = f"artifacts/{timestamp}_{model_name}_{class_count}class"
         else:
-            args.run_dir = "artifacts/default_run"
+            hyperparameters["run_dir"] = "artifacts/default"
 
-    checkpoint_to_load = None
-    if args.resume and args.mode == "train":
-        runs = sorted(
-            [
-                os.path.join("artifacts", d)
-                for d in os.listdir("artifacts")
-                if os.path.isdir(os.path.join("artifacts", d)) and not d.startswith("default_")
-            ]
+    run_directory = Path(hyperparameters["run_dir"])
+    checkpoint_path = None
+
+    if parsed_arguments.resume and parsed_arguments.mode == "train":
+        artifacts_path = Path("artifacts")
+        historical_runs = sorted(
+            [directory for directory in artifacts_path.glob("*") if directory.is_dir() and directory.name != "default"]
         )
-        if runs:
-            args.run_dir = runs[-1]
-            checkpoint_path = os.path.join(args.run_dir, "checkpoint.pth")
-            if os.path.exists(checkpoint_path):
-                checkpoint_to_load = checkpoint_path
-                print(f"Identified recovery checkpoint at: {checkpoint_path}")
-            else:
-                print(f"Selected: {args.run_dir}, but checkpoint.pth is missing. Starting afresh.")
-        else:
-            print("No existing run files located. Starting fresh training session.")
+        if historical_runs:
+            last_run = historical_runs[-1]
+            target_checkpoint = last_run / "checkpoint.pth"
+            if target_checkpoint.exists():
+                hyperparameters["run_dir"] = str(last_run)
+                run_directory = last_run
+                checkpoint_path = target_checkpoint
+                print(f"[INFO] Resume target identified: {checkpoint_path}")
 
-    if args.mode == "train" and checkpoint_to_load is None:
-        os.makedirs(args.run_dir, exist_ok=True)
-        with open(os.path.join(args.run_dir, "hyperparameters.json"), "w") as f:
-            json.dump(vars(args), f, default=str, indent=4)
+    if parsed_arguments.mode in ["train", "optimize"] and checkpoint_path is None:
+        run_directory.mkdir(parents=True, exist_ok=True)
+        serializable_hyperparameters = {
+            key: str(value) if isinstance(value, (Path, torch.device)) else value
+            for key, value in hyperparameters.items()
+        }
+        (run_directory / "hyperparameters.json").write_text(json.dumps(serializable_hyperparameters, indent=4))
 
-    if args.mode == "test":
-        run_sanity_checks(args)
+    if parsed_arguments.mode == "test":
+        run_sanity_checks(**hyperparameters)
 
-    elif args.mode == "train":
-        print(f"Initializing run for {args.model_type} [Classes: {args.num_classes}]")
-        print(f"Output targets folder: {args.run_dir}")
-
-        train_loader, val_loader = get_dataloaders(
-            root_dir=args.root_dir, batch_size=args.batch_size, num_classes=args.num_classes, img_size=args.img_size
-        )
-
-        model = build_model(
-            model_type=args.model_type,
-            num_classes=args.num_classes,
-            encoder_name=args.encoder_name,
-            encoder_weights=args.encoder_weights,
-        ).to(args.device)
-
-        optimizer = build_optimizer(
-            model=model,
-            lr=args.lr,
-            weight_decay=args.weight_decay,
-            model_type=args.model_type,
-            optimizer=args.optimizer,
-        )
-
-        scheduler = build_scheduler(optimizer, scheduler_type=args.scheduler)
-        criterion = build_criterion(args.num_classes, pos_weight=args.pos_weight)
-
-        trainer_kwargs = vars(args).copy()
-        for key in ["optimizer", "scheduler", "device"]:
-            trainer_kwargs.pop(key, None)
+    elif parsed_arguments.mode == "train":
+        train_loader, val_loader = get_dataloaders(**hyperparameters)
+        model, criterion, optimizer, scheduler = build_pipeline(**hyperparameters)
 
         trainer = Trainer(
             model=model,
@@ -137,25 +93,19 @@ def main():
             criterion=criterion,
             optimizer=optimizer,
             scheduler=scheduler,
-            device=args.device,
-            **trainer_kwargs,
+            **hyperparameters,
         )
 
-        if checkpoint_to_load:
-            trainer.resume(checkpoint_to_load)
+        if checkpoint_path is not None:
+            trainer.resume(checkpoint_path)
 
-        trainer.fit(img_size=args.img_size)
+        trainer.fit()
 
-    elif args.mode == "optimize":
-        print(f"Beginning hyperparameter optimization sweeps. (Target limit: {args.optuna_trials})")
-        run_optuna_study(args)
+    elif parsed_arguments.mode == "optimize":
+        run_optuna_study(**hyperparameters)
 
-    elif args.mode == "infer":
-        if args.image_path is None:
-            parser.error("--image_path must be specified when using --mode infer.")
-        run_smart_inference(
-            image_path=args.image_path, run_dir=args.run_dir, class_mapping_path=args.class_mapping, save_output=True
-        )
+    elif parsed_arguments.mode == "infer":
+        run_smart_inference(**hyperparameters)
 
 
 if __name__ == "__main__":
