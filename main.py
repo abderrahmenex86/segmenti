@@ -16,6 +16,7 @@ from src.trainer import Trainer
 def main():
     argument_parser = argparse.ArgumentParser(description="Segmenti Pure-PyTorch ML Lifecycle Engine")
     argument_parser.add_argument("--mode", required=True, choices=["test", "train", "optimize", "infer"])
+    argument_parser.add_argument("--model_type", default="unet", choices=["unet", "deeplabv3", "linknet", "segformer"])
     argument_parser.add_argument("--root_dir", default="dataset/plantseg")
     argument_parser.add_argument("--run_dir", default=None)
     argument_parser.add_argument("--resume", action="store_true")
@@ -39,7 +40,6 @@ def main():
     hyperparameters.setdefault("batch_size", 16)
     hyperparameters.setdefault("epochs", 50)
     hyperparameters.setdefault("patience", 5)
-    hyperparameters.setdefault("model_type", "unet")
     hyperparameters.setdefault("optimizer_type", "AdamW")
     hyperparameters.setdefault("learning_rate", 1e-3)
     hyperparameters.setdefault("weight_decay", 1e-4)
