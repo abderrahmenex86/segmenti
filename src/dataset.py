@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -8,141 +8,77 @@ from torchvision import tv_tensors
 from torchvision.transforms import v2
 
 
-class PlantSegDataset(Dataset):
-    def __init__(self, root_dir, split, transform, num_classes=116, limit_dataset=None):
-        assert split in ["train", "val", "test"], "Split must be 'train', 'val', or 'test'"
-        self.root_dir = root_dir
-        self.split = split
-        self.transform = transform
-        self.num_classes = num_classes
-
-        self.images_dir = os.path.join(root_dir, "images", split)
-        self.masks_dir = os.path.join(root_dir, "annotations", split)
-
-        if not os.path.exists(self.images_dir):
-            raise FileNotFoundError(f"Missing images folder: {self.images_dir}")
-        if not os.path.exists(self.masks_dir):
-            raise FileNotFoundError(f"Missing annotations folder: {self.masks_dir}")
-
-        self.filenames = sorted(
-            [f for f in os.listdir(self.images_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
-        )
-
-        if limit_dataset is not None:
-            self.filenames = self.filenames[:limit_dataset]
-
-        self.error_log = []
+class SegmentDataset(Dataset):
+    def __init__(self, root, split, transform, num_classes, limit=None):
+        self.img_dir, self.mask_dir = Path(root) / "images" / split, Path(root) / "annotations" / split
+        self.files = sorted([f.name for f in self.img_dir.glob("*.*") if f.suffix.lower() in [".jpg", ".png"]])[:limit]
+        self.transform, self.num_classes = transform, num_classes
 
     def __len__(self):
-        return len(self.filenames)
+        return len(self.files)
 
     def __getitem__(self, idx):
-        try:
-            image_path = os.path.join(self.images_dir, self.filenames[idx])
-            image = Image.open(image_path).convert("RGB")
-            image = tv_tensors.Image(image)
+        image_path = self.img_dir / self.files[idx]
+        mask_numpy = np.array(Image.open(self.mask_dir / f"{image_path.stem}.png").convert("L"))
+        mask_tensor = torch.from_numpy(
+            (mask_numpy > 0).astype(np.float32) if self.num_classes == 1 else mask_numpy.astype(np.int64)
+        ).unsqueeze(0)
 
-            base_name = os.path.splitext(self.filenames[idx])[0]
-            mask_path = os.path.join(self.masks_dir, f"{base_name}.png")
-
-            mask = Image.open(mask_path).convert("L")
-            mask_np = np.array(mask)
-
-            if self.num_classes == 1:
-                mask_np = (mask_np > 0).astype(np.float32)
-            else:
-                mask_np = mask_np.astype(np.int64)
-
-            mask_tensor = torch.from_numpy(mask_np).unsqueeze(0)
-            mask = tv_tensors.Mask(mask_tensor)
-
-            if self.transform:
-                image, mask = self.transform(image, mask)
-
-        except Exception as e:
-            self.error_log.append(
-                {"index": idx, "error": str(e), "path": image_path if "image_path" in locals() else "N/A"}
-            )
-            next_idx = (idx + 1) % len(self)
-            return self.__getitem__(next_idx)
-
-        return image, mask
-
-    def get_error_log(self):
-        return self.error_log
+        return self.transform(tv_tensors.Image(Image.open(image_path).convert("RGB")), tv_tensors.Mask(mask_tensor))
 
 
-def get_transforms(img_size: int, num_classes: int, is_train: bool):
+def get_dataloaders(root_dir, batch_size, img_size, num_classes, limit_dataset=None, **kwargs):
     mask_dtype = torch.float32 if num_classes == 1 else torch.int64
 
-    if is_train:
-        return v2.Compose(
-            [
-                v2.ToImage(),
-                v2.Resize((img_size, img_size), antialias=True),
-                v2.RandomHorizontalFlip(p=0.5),
-                v2.RandomVerticalFlip(p=0.5),
-                v2.ColorJitter(brightness=0.3, contrast=0.3),
-                v2.ToDtype(
-                    dtype={
-                        tv_tensors.Image: torch.float32,
-                        tv_tensors.Mask: mask_dtype,
-                    },
-                    scale=True,
-                ),
-                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        )
-    else:
-        return v2.Compose(
-            [
-                v2.ToImage(),
-                v2.Resize((img_size, img_size), antialias=True),
-                v2.ToDtype(
-                    dtype={
-                        tv_tensors.Image: torch.float32,
-                        tv_tensors.Mask: mask_dtype,
-                    },
-                    scale=True,
-                ),
-                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        )
+    base_transforms = [v2.ToImage(), v2.Resize((img_size, img_size), antialias=True)]
+    normalization_transforms = [
+        v2.ToDtype(dtype={tv_tensors.Image: torch.float32, tv_tensors.Mask: mask_dtype}, scale=True),
+        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
 
+    train_transforms = v2.Compose(
+        base_transforms
+        + [
+            v2.RandomHorizontalFlip(p=kwargs.get("aug_hflip_p", 0.5)),
+            v2.RandomVerticalFlip(p=kwargs.get("aug_vflip_p", 0.5)),
+            v2.RandomRotation(degrees=kwargs.get("aug_rotation", 25)),
+            v2.ColorJitter(
+                brightness=kwargs.get("aug_brightness", 0.2),
+                contrast=kwargs.get("aug_contrast", 0.2),
+                saturation=kwargs.get("aug_saturation", 0.2),
+            ),
+        ]
+        + normalization_transforms
+    )
 
-def get_dataloaders(
-    root_dir: str,
-    batch_size: int,
-    num_classes: int,
-    img_size: int,
-    limit_dataset: int = None,
-):
-    prefetch_factor = 2
+    val_transforms = v2.Compose(base_transforms + normalization_transforms)
 
-    train_transform = get_transforms(img_size, num_classes, is_train=True)
-    val_transform = get_transforms(img_size, num_classes, is_train=False)
+    use_cuda = torch.cuda.is_available()
 
-    train_dataset = PlantSegDataset(root_dir, "train", train_transform, num_classes, limit_dataset)
-    val_dataset = PlantSegDataset(root_dir, "val", val_transform, num_classes, limit_dataset)
+    num_workers_train = kwargs.get("train_num_workers", 10 if use_cuda else 0)
+    num_workers_val = kwargs.get("val_num_workers", 4 if use_cuda else 0)
+    prefetch_factor_value = kwargs.get("prefetch_factor", 4)
+    use_pin_memory = kwargs.get("pin_memory", use_cuda)
+    use_persistent_workers = kwargs.get("persistent_workers", use_cuda)
 
     train_loader = DataLoader(
-        train_dataset,
+        SegmentDataset(root_dir, "train", train_transforms, num_classes, limit_dataset),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=12,
-        pin_memory=True,
-        prefetch_factor=prefetch_factor,
-        persistent_workers=True,
+        num_workers=num_workers_train,
+        pin_memory=use_pin_memory,
+        prefetch_factor=prefetch_factor_value if num_workers_train > 0 else None,
+        persistent_workers=use_persistent_workers if num_workers_train > 0 else False,
     )
 
     val_loader = DataLoader(
-        val_dataset,
+        SegmentDataset(root_dir, "val", val_transforms, num_classes, limit_dataset),
         batch_size=batch_size,
         shuffle=False,
-        num_workers=8,
-        pin_memory=True,
-        prefetch_factor=prefetch_factor,
-        persistent_workers=True,
+        num_workers=num_workers_val,
+        pin_memory=use_pin_memory,
+        prefetch_factor=prefetch_factor_value if num_workers_val > 0 else None,
+        persistent_workers=use_persistent_workers if num_workers_val > 0 else False,
     )
 
     return train_loader, val_loader
