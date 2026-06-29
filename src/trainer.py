@@ -17,9 +17,10 @@ class Trainer:
         self.device = device
 
         self.num_classes = kwargs.get("num_classes", 116)
-        self.epochs = kwargs.get("epochs", 50)
-        self.patience = kwargs.get("patience", 5)
+        self.epochs = kwargs.get("epochs", 100)
+        self.patience = kwargs.get("patience", 10)
         self.run_directory = Path(kwargs.get("run_dir", "artifacts/default"))
+        self.clip_gradient_max_norm = kwargs.get("clip_grad_norm", 1.0)
 
         self.best_validation_dice = -1.0
         self.patience_counter = 0
@@ -87,6 +88,7 @@ class Trainer:
 
                 if is_training:
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_gradient_max_norm)
                     self.optimizer.step()
 
                 batch_size = images.size(0)
